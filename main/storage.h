@@ -10,6 +10,8 @@
 #define STORAGE_H
 
 #include <stdint.h>
+#include <ArduinoJson.h>
+#include <ArduinoJson.hpp>
 
 /******************************************************************
 *
@@ -35,8 +37,6 @@
 
 /// The number of patterns that can run at maximum.
 #define PATTERN_LIMIT 4
-
-
 
 typedef struct{
 
@@ -81,5 +81,6 @@ void clear_all();
 void load_from_nvs();
 void save_config_to_nvs();
 void verify_saves();
+
 
 #endif

@@ -1,3 +1,4 @@
+#include <atomic>
 #pragma once
 
 #include <ESPmDNS.h>
@@ -10,6 +11,8 @@
 #include <WebResponseImpl.h>
 #include "esp_wifi.h"
 
+typedef StaticJsonDocument<384> NanoluxJson;
+
 
 //#define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
 #define DEBUG_PRINTF(...)
@@ -17,7 +20,7 @@
 #define ALWAYS_PRINTF(...) Serial.printf(__VA_ARGS__)
 
 // Uncomment to use the old LittleFS web app loader.
-//#define SD_LOADER
+#define SD_LOADER
 
 #ifdef SD_LOADER
   #include "FS.h"
@@ -31,12 +34,32 @@
   #include <LittleFS.h>
 #endif
 
+/**
+ * WEB SERVER CONSTANTS
+**/
+#define HTTP_OK                 200
+#define HTTP_ACCEPTED           202
+#define HTTP_BAD_REQUEST        400
+#define HTTP_UNAUTHORIZED       401
+#define HTTP_METHOD_NOT_ALLOWED 405
+#define HTTP_UNPROCESSABLE      422
+#define HTTP_INTERNAL_ERROR     500
+#define HTTP_UNAVAILABLE        503
+
+#define CONTENT_JSON "application/json"
+#define CONTENT_TEXT "text/plain"
+#define URL_FILE "/assets/url.json"
+#define SETTINGS_FILE "/settings.json"
+const char* EMPTY_SETTING = "#_None_#";
+
+#define MAX_WIFI_CONNECT_WAIT 100
+#define MAX_NETWORKS          15
+#define END_OF_DATA           9999
+
 /*
  * WIFI management data.
  */
-constexpr int MAX_WIFI_CONNECT_WAIT = 100;
-constexpr int MAX_NETWORKS = 15;
-constexpr int END_OF_DATA = 9999;
+
 typedef struct {
   String SSID;
   int32_t RSSI;
@@ -85,39 +108,16 @@ bool join_succeeded = false;
  */
 const char* ap_ssid = "AUDIOLUX";
 const char* ap_password = "12345678";
-
 const char* DEFAULT_HOSTNAME = "audiolux";
 static String hostname;
-
 
 
 /*
  * Settings
  */
-const char* SETTINGS_FILE = "/settings.json";
 static StaticJsonDocument<384> settings;
-const char* EMPTY_SETTING = "#_None_#";
 volatile bool dirty_settings = false;
-
-
-
-/*
- * Web Server related.
- */
-constexpr int HTTP_OK = 200;
-constexpr int HTTP_ACCEPTED = 202;
-constexpr int HTTP_BAD_REQUEST = 400;
-constexpr int HTTP_UNAUTHORIZED = 401;
-constexpr int HTTP_METHOD_NOT_ALLOWED = 405;
-constexpr int HTTP_UNPROCESSABLE = 422;
-constexpr int HTTP_INTERNAL_ERROR = 500;
-constexpr int HTTP_UNAVAILABLE = 503;
-
-const char* CONTENT_JSON = "application/json";
-const char* CONTENT_TEXT = "text/plain";
-
 static String http_response;
-const char* URL_FILE = "/assets/url.json";
 volatile bool server_unavailable = false;
 
 /*
@@ -136,17 +136,40 @@ typedef struct {
 
 AsyncWebServer webServer(80);
 
-/*
- * File system
- */
-inline void initialize_file_system() {
+/// @brief Opens a file on the currently-running filesystem.
+///
+/// Wrapper for an #ifdef macro for filesystem selection (SD vs LittleFS).
+inline File open_file(const char * path, const char * mode){
+  #ifdef SD_LOADER
+    return SD.open(path, mode);
+  #else
+    return LittleFS.open(path, mode);
+  #endif
+}
 
+/// @brief Saves a JSON to a given file path.
+///
+/// @param path The file location to save to.
+/// @param json The JSON object to save.
+inline bool save_json_to_file(const char * path, NanoluxJson json){
+  File f = open_file(path, "w");
+  if (f){
+    serializeJson(f, json);
+    return true;
+  } 
+  return false;
+}
+
+/// @brief Initalizes the file system used on the ESP32.
+///
+/// This function will start the filesystem on the SD card if the
+/// flag SD_LOADER is defined.
+inline void initialize_file_system() {
   #ifdef SD_LOADER
     DEBUG_PRINTF("Initializing SD FS...");
     SPI.begin(SCK, MISO, MOSI, CS);
     if (!SD.begin(CS))
-      DEBUG_PRINTF("Card Mount Failed");
-    DEBUG_PRINTF("Card mount successful.");
+      ALWAYS_PRINTF("Card Mount Failed");
   #else
     DEBUG_PRINTF("Initializing FS...");
     if (LittleFS.begin()) {
@@ -157,68 +180,84 @@ inline void initialize_file_system() {
   #endif 
 }
 
-/*
- * Settings Management
- */
+/// @brief Saves the settings JSON file from memory onto the filesytem.
+///
+/// Saves the current hostname, SSID, and WiFi key to the storage JSON, then
+/// writes to the storage file.
 inline void save_settings() {
-  if (!settings.containsKey("wifi")) {
-    settings.createNestedObject("wifi");
-  }
+
+  if (!settings.containsKey("wifi")) settings.createNestedObject("wifi");
+
   settings["hostname"] = hostname;
   settings["wifi"]["ssid"] = current_wifi.SSID;
   settings["wifi"]["key"] = current_wifi.Key;
 
-  #ifdef SD_LOADER
-    File saved_settings = SD.open(SETTINGS_FILE, "w");
-  #else
-    File saved_settings = LittleFS.open(SETTINGS_FILE, "w");
-  #endif
-  
-  if (saved_settings) {
-    serializeJson(settings, saved_settings);
-    DEBUG_PRINTF("Saving settings:\n");
+  if(save_json_to_file(SETTINGS_FILE, settings)){
+    DEBUG_PRINTF("WiFi settings saved:\n");
     serializeJsonPretty(settings, Serial);
-    DEBUG_PRINTF("\n");
-  } else {
-    DEBUG_PRINTF("Unable to save settings file.\n");
+  }else{
+    DEBUG_PRINTF("Unable to save settings file.");
   }
+
+  DEBUG_PRINTF("\n");
 }
 
+inline bool load_json_from_file(const char * path, NanoluxJson target){
 
+  File f = open_file(path, "r");
+
+  if(f) return deserializeJson(target, f) ? false : true;
+
+  return false;
+
+}
+
+/// @brief Loads the settings JSON from the filesystem into memory.
+///
+/// If unable to load settings, this function will load a "default"
+/// settings file and save it to storage.
 inline void load_settings() {
-  DEBUG_PRINTF("Checking if settings are available.\n");
 
-  #ifdef SD_LOADER
-    File saved_settings = SD.open(SETTINGS_FILE, "r");
-  #else
-    File saved_settings = LittleFS.open(SETTINGS_FILE, "r");
-  #endif
-  
-  if (saved_settings) {
-    const DeserializationError error = deserializeJson(settings, saved_settings);
-    if (!error) {
-      DEBUG_PRINTF("Settings loaded:\n");
-      serializeJsonPretty(settings, Serial);
-      DEBUG_PRINTF("\n");
+  DEBUG_PRINTF("Loading saved WiFi settings.\n");
 
-      hostname = settings["hostname"].as<String>();
-      current_wifi.SSID = settings["wifi"]["ssid"].as<String>();
-      current_wifi.Key = settings["wifi"]["key"].as<String>();
+  if(load_json_from_file(SETTINGS_FILE, settings)){
 
-      return;
-    }
+    DEBUG_PRINTF("Settings loaded:\n");
+    serializeJsonPretty(settings, Serial);
+    DEBUG_PRINTF("\n");
 
-    DEBUG_PRINTF("Error loading saved file: %s\n", error.c_str());
+    hostname = settings["hostname"].as<String>();
+    current_wifi.SSID = settings["wifi"]["ssid"].as<String>();
+    current_wifi.Key = settings["wifi"]["key"].as<String>();
+
+    return;
   }
 
-  DEBUG_PRINTF("Unable to load settings. Will use defaults (re)create file.\n");
-
+  DEBUG_PRINTF("Unable to load settings. Saving empty file.\n");
   current_wifi.SSID = EMPTY_SETTING;
   current_wifi.Key = EMPTY_SETTING;
   hostname = DEFAULT_HOSTNAME;
   save_settings();
 }
 
+
+
+/// @brief Saves a given URL to the "url" file, which is where
+/// the user connects to the device at in a browser.
+///
+/// @param url The URL to be saved.
+inline void save_url(const String& url) {
+
+  NanoluxJson data;
+  data["url"] = url;
+
+  if(save_json_to_file(URL_FILE, data)){
+    DEBUG_PRINTF("%s saved as Web App URL.\n", url.c_str());
+  }else{
+    DEBUG_PRINTF("Unable to save Web App URL, will default to http://192.168.4.1.\n");
+  }
+
+}
 
 inline const String& build_response(const bool success, const char* message, const char* details) {
   http_response = String("{\"success\": ") + (success ? "true" : "false");
@@ -370,7 +409,6 @@ inline void on_join_timer(TimerHandle_t timer) {
   }
 }
 
-
 /*
  * Wifi management
  */
@@ -405,231 +443,8 @@ inline bool join_wifi(const char* ssid, const char* key) {
   return false;
 }
 
-
-/*
- * Wifi API handling
- */
-inline void serve_wifi_list(AsyncWebServerRequest* request) {
-  if (join_in_progress) {
-    request->send(HTTP_UNAVAILABLE);
-    return;
-  }
-
-  scan_ssids();
-
-  StaticJsonDocument<1024> json_list;
-  int wifi_number = 0;
-  while (wifi_number < MAX_NETWORKS && available_networks[wifi_number].RSSI != END_OF_DATA) {
-    JsonObject wifi = json_list.createNestedObject();
-    wifi["ssid"] = available_networks[wifi_number].SSID;
-    wifi["rssi"] = available_networks[wifi_number].RSSI;
-    wifi["lock"] = available_networks[wifi_number].EncryptionType != WIFI_AUTH_OPEN;
-    wifi_number++;
-  }
-
-  // If no results, return an empty array.
-  String wifi_list;
-  serializeJson(json_list, wifi_list);
-  if (wifi_list == "null") {
-    wifi_list = "[]";
-  }
-
-  DEBUG_PRINTF("Sending networks:\n%s\\n", wifi_list.c_str());
-  request->send(HTTP_OK, CONTENT_JSON, wifi_list);
-}
-
-
-inline void handle_wifi_put_request(AsyncWebServerRequest* request, JsonVariant& json) {
-  if (request->method() == HTTP_PUT) {
-    const JsonObject& payload = json.as<JsonObject>();
-
-    int status = HTTP_OK;
-
-    bool joined = false;
-    if (payload["ssid"] == nullptr) {
-      DEBUG_PRINTF("/api/wifi: Forgetting current network.\n");
-      WiFi.disconnect();
-      delay(100);
-
-      current_wifi.SSID = EMPTY_SETTING;
-      current_wifi.Key = EMPTY_SETTING;
-      save_settings();
-
-      joined = true;
-    } else {
-      DEBUG_PRINTF("/api/wifi: Joining network.\n");
-      joined = join_wifi(payload["ssid"], payload["key"]);
-    }
-
-    int response_status;
-    String message;
-    if (joined) {
-      response_status = HTTP_ACCEPTED;
-      message = "Operation completed.";
-    } else {
-      response_status = HTTP_INTERNAL_ERROR;
-      message = "Unable to monitor join operation: could not start timer or get mutex.";
-      DEBUG_PRINTF("%s\n", message.c_str());
-    }
-    request->send(response_status, CONTENT_JSON, build_response(joined, message.c_str(), nullptr));
-  } else {
-    request->send(HTTP_METHOD_NOT_ALLOWED);
-  }
-}
-
-
-inline void handle_wifi_get_request(AsyncWebServerRequest* request) {
-  const String wifi = current_wifi.SSID == EMPTY_SETTING ? String("null") : String("\"") + String(current_wifi.SSID) + String("\"");
-  const bool connected = current_wifi.SSID == EMPTY_SETTING ? false : (WiFi.status() == WL_CONNECTED);
-  const String response = String("{ \"ssid\": ") + String(wifi) + String(", \"connected\": ") + (connected ? "true" : "false") + String(" }");
-
-  DEBUG_PRINTF("Sending current wifi: %s\n", response.c_str());
-  request->send(HTTP_OK, CONTENT_JSON, response);
-}
-
-inline void handle_wifi_status_request(AsyncWebServerRequest* request) {
-  const String wifi = current_wifi.SSID == EMPTY_SETTING ? String("null") : String("\"") + String(current_wifi.SSID) + String("\"");
-
-  String status;
-  if (xSemaphoreTake(join_status_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-    if (join_in_progress) {
-      status = "pending";
-    } else if (join_succeeded) {
-      status = "success";
-    } else {
-      status = "fail";
-    }
-
-    xSemaphoreGive(join_status_mutex);
-  }
-
-  const String response = String("{ \"ssid\": ") + String(wifi) + String(", \"status\": \"") + status + String("\" }");
-
-  DEBUG_PRINTF("Sending wifi status: %s\n", response.c_str());
-  request->send(HTTP_OK, CONTENT_JSON, response);
-}
-
-
-/*
- * Hostname API handling
- */
-inline void handle_hostname_put_request(AsyncWebServerRequest* request, JsonVariant& json) {
-  if (server_unavailable) {
-    request->send(HTTP_UNAVAILABLE);
-    return;
-  }
-
-  if (request->method() == HTTP_PUT) {
-    const JsonObject& payload = json.as<JsonObject>();
-
-    int status = HTTP_OK;
-
-    hostname = payload["hostname"].as<String>();
-    save_settings();
-    DEBUG_PRINTF("Hostname %s saved.\n", hostname.c_str());
-    request->send(HTTP_OK,
-                  CONTENT_TEXT,
-                  build_response(true, "New hostname saved.", nullptr));
-  }
-}
-
-inline void handle_hostname_get_request(AsyncWebServerRequest* request) {
-  if (server_unavailable) {
-    request->send(HTTP_UNAVAILABLE);
-    return;
-  }
-
-  const String response = String("{ \"hostname\": ") + "\"" + String(hostname) + String("\" }");
-
-  DEBUG_PRINTF("Sending current hostname: %s\n", response.c_str());
-  request->send(HTTP_OK, CONTENT_JSON, response);
-}
-
-
-/*
- * Health ping.
- */
-inline void handle_health_check(AsyncWebServerRequest* request) {
-  if (server_unavailable) {
-    request->send(HTTP_UNAVAILABLE);
-    return;
-  }
-
-  DEBUG_PRINTF("Pong.\n");
-  request->send(HTTP_OK);
-}
-
-
-/*
- * Unknown path (404) handler
- */
-inline void handle_unknown_url(AsyncWebServerRequest* request) {
-  // If browser sends preflight to check for CORS we tell them
-  // it's okay. NOTE: Google is stubborn about it. You will need
-  // to disable strict CORS checking using the --disable-web-security
-  // option when starting it.
-  if (request->method() == HTTP_OPTIONS) {
-    request->send(200);
-    return;
-  }
-
-  // Otherwise, we got an unknown request. Print info about it
-  // that may be useful for debugging.
-  String method;
-  switch (request->method()) {
-    case HTTP_GET:
-      method = "GET";
-      break;
-    case HTTP_POST:
-      method = "POST";
-      break;
-    case HTTP_PUT:
-      method = "PUT";
-      break;
-    default:
-      method = "UNKNOWN";
-  }
-  DEBUG_PRINTF("Not Found: %s -> http://%s%s\n", method.c_str(), request->host().c_str(), request->url().c_str());
-
-  if (request->contentLength()) {
-    DEBUG_PRINTF("_CONTENT_TYPE: %s\n", request->contentType().c_str());
-    DEBUG_PRINTF("_CONTENT_LENGTH: %u\n", request->contentLength());
-  }
-
-  const int headers = request->headers();
-  for (int i = 0; i < headers; i++) {
-    const AsyncWebHeader* header = request->getHeader(i);
-    DEBUG_PRINTF("_HEADER[%s]: %s\n", header->name().c_str(), header->value().c_str());
-  }
-
-  request->send(404);
-}
-
-
-inline void save_url(const String& url) {
-  // This is a static file that lives in the "assets" of the web app.
-  // When it starts, it will check this file to know which URL to use to talk
-  // back to the server. The reason we need this is that we don't know which
-  // route is available (AP or STA) until runtime.
-  #ifdef SD_LOADER
-    File saved_url = SD.open(URL_FILE, "w");
-  #else
-    File saved_url = LittleFS.open(URL_FILE, "w");
-  #endif
-  
-  if (saved_url) {
-    StaticJsonDocument<192> data;
-
-    data["url"] = url;
-    Serial.println(url);
-
-    serializeJson(data, saved_url);
-    DEBUG_PRINTF("%s saved as Web App URL.\n", url.c_str());
-  } else {
-    DEBUG_PRINTF("Unable to save Web App URL, will default to http://192.168.4.1.\n");
-  }
-}
-
+/// Include for the Web API
+#include "web_api.h"
 
 inline void setup_networking(const char* password) {
   initialize_file_system();
@@ -667,8 +482,6 @@ inline void setup_networking(const char* password) {
     initialize_mdns(true);
   }
 
-
-
   delay(1000);
   const IPAddress ap_ip = WiFi.softAPIP();
 
@@ -682,34 +495,10 @@ inline void setup_networking(const char* password) {
     api_url += ap_ip.toString();
   }
   save_url(api_url);
-  ALWAYS_PRINTF("Backend availbale at: %s", api_url.c_str());
+  ALWAYS_PRINTF("Backend available at: %s", api_url.c_str());
 }
 
-
-inline void initialize_web_server(const APIGetHook api_get_hooks[], const int get_hook_count, APIPutHook api_put_hooks[], const int put_hook_count, const char* password) {
-  // Mutex to make join status globals thread safe.
-  // The timer below runs on a different context than the web server,
-  // so we need to properly marshall access between contexts.
-  join_status_mutex = xSemaphoreCreateMutex();
-  if (join_status_mutex == nullptr) {
-    // If we get here we are in serious trouble, and there is nothing the
-    // code can do. We just die unceremoniously.
-    DEBUG_PRINTF("WebServer: failed to create mutex. Process halted.\n");
-    for (;;) {
-      delay(1000);
-    }
-  }
-
-  // Software timer to monitor async WiFi joins.
-  join_timer = xTimerCreate(
-    "WiFiJoinTimer",
-    pdMS_TO_TICKS(200),
-    pdTRUE,   // Auto re-trigger.
-    nullptr,  // Timer ID pointer, not used.
-    on_join_timer);
-
-  setup_networking(password);
-
+inline void register_api(const APIGetHook api_get_hooks[], const int get_hook_count, APIPutHook api_put_hooks[], const int put_hook_count){
   // Register the main process API handlers.
   DEBUG_PRINTF("Registering main APIs.\n");
   for (int i = 0; i < get_hook_count; i++) {
@@ -731,9 +520,43 @@ inline void initialize_web_server(const APIGetHook api_get_hooks[], const int ge
   webServer.addHandler(new AsyncCallbackJsonWebHandler("/api/wifi", handle_wifi_put_request));
   webServer.addHandler(new AsyncCallbackJsonWebHandler("/api/hostname", handle_hostname_put_request));
 
+  webServer.onNotFound(handle_unknown_url);
+}
 
-  // Register the Web App
-  DEBUG_PRINTF("Registering Web App files.\n");
+/// @brief Creates both a mutex and timer monitor to observe and
+/// accept incoming WiFi joins.
+///
+/// The timer runs on a different context than the web server,
+/// so we need to properly marshall access between contexts.
+inline void create_wifi_join_timer(){
+  
+  join_status_mutex = xSemaphoreCreateMutex();
+  if (join_status_mutex == nullptr) {
+    // If we get here we are in serious trouble, and there is nothing the
+    // code can do. We just die unceremoniously.
+    DEBUG_PRINTF("WebServer: failed to create mutex. Process halted.\n");
+    for (;;) {
+      delay(1000);
+    }
+  }
+
+  // Software timer to monitor async WiFi joins.
+  join_timer = xTimerCreate(
+    "WiFiJoinTimer",
+    pdMS_TO_TICKS(200),
+    pdTRUE,   // Auto re-trigger.
+    nullptr,  // Timer ID pointer, not used.
+    on_join_timer);
+}
+
+
+inline void initialize_web_server(const APIGetHook api_get_hooks[], const int get_hook_count, APIPutHook api_put_hooks[], const int put_hook_count, const char* password) {
+
+  create_wifi_join_timer();
+
+  setup_networking(password);
+
+  register_api(api_get_hooks, get_hook_count, api_put_hooks, put_hook_count);
 
   #ifdef SD_LOADER
     webServer.serveStatic("/", SD, "/").setDefaultFile("index.html");
@@ -741,14 +564,15 @@ inline void initialize_web_server(const APIGetHook api_get_hooks[], const int ge
     webServer.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
   #endif
 
-  
-  webServer.onNotFound(handle_unknown_url);
-
-  // "Disable" CORS.
+  // Setup access control headers.
+  // The settings here are liberal to allow the MDNS connection to function properly
+  // with the API
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "*");
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "*");
+
   esp_wifi_set_ps(WIFI_PS_NONE);
+
   webServer.begin();
   MDNS.addService("http", "tcp", 80);
 }

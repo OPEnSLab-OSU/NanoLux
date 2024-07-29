@@ -1,0 +1,1 @@
+python -m PyInstaller -F --icon=assets\icon.ico --noconsole main.py

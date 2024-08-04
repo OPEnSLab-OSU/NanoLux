@@ -357,16 +357,12 @@ void print_buffer(CRGB *buf, uint8_t len) {
 /// commented.
 void update_hardware(){
 
+  process_reset_button(!digitalRead(BUTTON_PIN));  // Manage resetting saves if button held
+
   #ifdef VERSION_2_HARDWARE
 
-    if (isEncoderButtonPressed() != lastEncoderBtnPressed)
+    if (button_pressed)
       manual_pattern.postprocessing_mode = (manual_pattern.postprocessing_mode + 1) % 4;
-    
-    //Serial.println(manual_pattern.postprocessing_mode);
-
-    lastEncoderBtnPressed = isEncoderButtonPressed();
-
-    process_reset_button(isEncoderButtonPressed());
 
     uint8_t old_idx = manual_pattern.idx;
     manual_pattern.idx = calculate_pattern_index();
@@ -374,21 +370,18 @@ void update_hardware(){
     if (old_idx != manual_pattern.idx){
       pattern_changed = true;
       manual_control_enabled = true;
-    }
-      
+    }     
 
   #else
-
-    process_reset_button(!digitalRead(BUTTON_PIN));  // Manage resetting saves if button held
     
     if(button_pressed){
       manual_pattern.idx = (manual_control_enabled + manual_pattern.idx) % NUM_PATTERNS;
       manual_control_enabled = true;
     }
 
-    reset_button_state();  // Check for user button input
-
   #endif
+
+  reset_button_state();  // Check for user button input
 
 }
 

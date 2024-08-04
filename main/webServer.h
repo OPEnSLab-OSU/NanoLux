@@ -10,6 +10,8 @@
 #include <WebHandlerImpl.h>
 #include <WebResponseImpl.h>
 #include "esp_wifi.h"
+#include "storage.h"
+
 
 typedef StaticJsonDocument<384> NanoluxJson;
 
@@ -50,7 +52,7 @@ typedef StaticJsonDocument<384> NanoluxJson;
 #define CONTENT_TEXT "text/plain"
 #define URL_FILE "/assets/url.json"
 #define SETTINGS_FILE "/settings.json"
-const char* EMPTY_SETTING = "#_None_#";
+#define EMPTY_SETTING "#_None_#"
 
 #define MAX_WIFI_CONNECT_WAIT 100
 #define MAX_NETWORKS          15
@@ -115,7 +117,7 @@ static String hostname;
 /*
  * Settings
  */
-static StaticJsonDocument<384> settings;
+static NanoluxJson settings;
 volatile bool dirty_settings = false;
 static String http_response;
 volatile bool server_unavailable = false;
@@ -154,7 +156,7 @@ inline File open_file(const char * path, const char * mode){
 inline bool save_json_to_file(const char * path, NanoluxJson json){
   File f = open_file(path, "w");
   if (f){
-    serializeJson(f, json);
+    serializeJson(json, f);
     return true;
   } 
   return false;
@@ -191,7 +193,7 @@ inline void save_settings() {
   settings["hostname"] = hostname;
   settings["wifi"]["ssid"] = current_wifi.SSID;
   settings["wifi"]["key"] = current_wifi.Key;
-
+  
   if(save_json_to_file(SETTINGS_FILE, settings)){
     DEBUG_PRINTF("WiFi settings saved:\n");
     serializeJsonPretty(settings, Serial);
@@ -202,45 +204,42 @@ inline void save_settings() {
   DEBUG_PRINTF("\n");
 }
 
-inline bool load_json_from_file(const char * path, NanoluxJson target){
-
-  File f = open_file(path, "r");
-
-  if(f) return deserializeJson(target, f) ? false : true;
-
-  return false;
-
-}
 
 /// @brief Loads the settings JSON from the filesystem into memory.
 ///
 /// If unable to load settings, this function will load a "default"
 /// settings file and save it to storage.
 inline void load_settings() {
+  DEBUG_PRINTF("Checking if settings are available.\n");
 
-  DEBUG_PRINTF("Loading saved WiFi settings.\n");
+  File saved_settings = open_file(SETTINGS_FILE, "r");
+  
+  if (saved_settings) {
+    const DeserializationError error = deserializeJson(settings, saved_settings);
+    if (!error) {
+      DEBUG_PRINTF("Settings loaded:\n");
+      serializeJsonPretty(settings, Serial);
+      DEBUG_PRINTF("\n");
 
-  if(load_json_from_file(SETTINGS_FILE, settings)){
+      hostname = settings["hostname"].as<String>();
+      current_wifi.SSID = settings["wifi"]["ssid"].as<String>();
+      current_wifi.Key = settings["wifi"]["key"].as<String>();
 
-    DEBUG_PRINTF("Settings loaded:\n");
-    serializeJsonPretty(settings, Serial);
-    DEBUG_PRINTF("\n");
+      // If either value here is "null" the nested object is probably broken in some way.
+      // This should get resolved upon a hostname or wifi save, but this is to prevent
+      // a 30 second boot hang.
+      if(current_wifi.SSID == "null" || current_wifi.Key == "null"){
+        current_wifi.SSID = EMPTY_SETTING;
+        current_wifi.Key = EMPTY_SETTING;
+        DEBUG_PRINTF("WIFI Error detected.\n");
+      }
+  
+      return;
+    }
 
-    hostname = settings["hostname"].as<String>();
-    current_wifi.SSID = settings["wifi"]["ssid"].as<String>();
-    current_wifi.Key = settings["wifi"]["key"].as<String>();
-
-    return;
+    DEBUG_PRINTF("Error loading saved file: %s\n", error.c_str());
   }
-
-  DEBUG_PRINTF("Unable to load settings. Saving empty file.\n");
-  current_wifi.SSID = EMPTY_SETTING;
-  current_wifi.Key = EMPTY_SETTING;
-  hostname = DEFAULT_HOSTNAME;
-  save_settings();
 }
-
-
 
 /// @brief Saves a given URL to the "url" file, which is where
 /// the user connects to the device at in a browser.

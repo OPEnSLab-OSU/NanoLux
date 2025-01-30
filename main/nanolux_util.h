@@ -23,5 +23,6 @@ void IRAM_ATTR readEncoderISR();
 void setup_rotary_encoder();
 int calculate_pattern_index();
 bool isEncoderButtonPressed();
+void update_encoder_value(long newValue);
 
 #endif

@@ -375,6 +375,18 @@ void update_hardware(){
       pattern_changed = true;
       manual_control_enabled = true;
     }
+
+    // Check if the Webapp has been updated
+    // (manual_control_enabled = false)
+    // and update the rotary encoder's value to the
+    // current pattern index.
+    if (!manual_control_enabled) {
+      uint8_t currentPatternIdx = loaded_patterns.pattern[0].idx;
+      
+      if (currentPatternIdx != manual_pattern.idx) {
+        update_encoder_value(currentPatternIdx);
+      }
+    }
       
 
   #else

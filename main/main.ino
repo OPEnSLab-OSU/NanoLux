@@ -375,6 +375,29 @@ void update_hardware(){
       pattern_changed = true;
       manual_control_enabled = true;
     }
+
+    // Check if the Webapp has been updated
+    // (manual_control_enabled = false)
+    // and update the rotary encoder's value to the
+    // current pattern index.
+    if (!manual_control_enabled) {
+      uint8_t currentPatternIdx = loaded_patterns.pattern[0].idx;
+
+      /*
+      // print current encoder value to serial monitor
+      Serial.print("Rotary Encoder Value: ");
+      Serial.println(manual_pattern.idx);
+      */
+      
+      if (currentPatternIdx != manual_pattern.idx) {
+        update_encoder_value(currentPatternIdx);
+        /*
+        // print the updated encoder value
+        Serial.print("Updated Encoder Value to: ");
+        Serial.println(calculate_pattern_index());
+        */
+      }
+    }
       
 
   #else

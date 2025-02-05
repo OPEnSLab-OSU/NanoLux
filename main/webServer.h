@@ -17,7 +17,7 @@
 #define ALWAYS_PRINTF(...) Serial.printf(__VA_ARGS__)
 
 // Uncomment to use the old LittleFS web app loader.
-//#define SD_LOADER
+#define SD_LOADER
 
 #ifdef SD_LOADER
   #include "FS.h"

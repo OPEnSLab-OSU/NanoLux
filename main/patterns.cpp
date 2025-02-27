@@ -824,3 +824,191 @@ void bar_fill(Strip_Buffer * buf, int len, Pattern_Data* params){
   
 }
 
+void blendIn(Strip_Buffer * buf, int len, Pattern_Data* params){
+    CHSV backColor;
+    CHSV corrColor;
+    switch(params->config){
+            case 0:
+            default:
+                backColor = CHSV(0, 0, 0);
+                corrColor = CHSV(0, 0, 255);
+    }
+    for(int i = 0; i < len; i++){
+        int blending = remap(vReal[i], MIN_FREQUENCY, MAX_FREQUENCY, 0, 256);
+        buf->leds[i] = blend(backColor, corrColor, blending);
+    }
+}
+
+void bleedThrough(Strip_Buffer * buf, int len, Pattern_Data* params){
+    CHSV backColor;
+    CHSV corrColor;
+    fadeToBlackBy(buf->leds, len, 20);
+    switch(params->config){
+        case 0:
+        default:
+            backColor = CHSV(0, 0, 0);
+            corrColor = CHSV(0, 0, 255);
+    }
+    int blending = remap(peak, MIN_FREQUENCY, MAX_FREQUENCY, 0, 256);
+    buf->vol_pos += blending;
+    if (buf->vol_pos > 256){
+        buf->vol_pos = 256;
+    }
+    fill_solid(buf->leds, len, blend(backColor, corrColor, buf->vol_pos))
+    if (buf->vol_pos == 256){
+        CHSV tempColor = backColor;
+        backColor = corrColor;
+        corrColor = tempColor;
+        buf->vol_pos = 0;
+    }
+}
+/*
+void bleedThroughArray(Strip_Buffer * buf, int len, Pattern_Data* params){
+    CHSV backColor;
+    CHSV corrColor;
+    fadeToBlackBy(buf->leds, len, 50);
+    switch(params->config){
+        case 0:
+        default:
+            backColor = CHSV(0, 0, 0);
+            corrColor = CHSV(255, 255, 255);
+    }
+    for(int i = 0; i < len; i++){
+        int blending = map(vReal[i], MIN_FREQUENCY, MAX_FREQUENCY, 0, 256);
+        buf->tempLeds[i] += blending;
+        buf->leds[i] = blend(backColor, corrColor, buf->tempLeds[i]);
+        if (buf->tempLeds[i] >= 256){
+            CHSV tempColor = backColor;
+            backColor = corrColor;
+            corrColor = tempColor;
+            buf->tempLeds[i] = 0;
+        }
+    }
+}
+
+void splash(Strip_Buffer * buf, int len, Pattern_Data* params){
+    buf->leds[0] = CHSV(0, 0, 0);
+    buf->leds[len] = CHSV(0, 0, 0);
+    CHSV temp = buf->leds[0];
+    for(int i = 1; i < len - 1; i++){
+        CHSV holding = temp;
+        temp = buf->leds[i];
+        buf->leds[i] = blend(holding, buf->leds[i + 1], .5);
+    }
+}
+
+void propagateSplatter(Strip_Buffer * buf, int len, Pattern_Data* params){
+  static float chancePropagate[len];
+  for(int i = 0; i < len; i++){
+    //might change to use salient freqs
+    if(vReal[i] == peak){
+      chancePropagate[i] = 5;
+    }
+  }
+  for(int i = 1; i < len - 1; i++){
+      if(chancePropagate[i] >= random(5)){
+        buf->leds[i] = CHSV(fhue, 255, vbrightness);
+        if (i - 1 >= 0){
+          chancePropagate[i - 1] = chancePropagate[i] - 1;
+        }
+        if (i + 1 <= len){
+          chancePropagate[i + 1] = chancePropagate[i] - 1;
+        }
+      }
+  }
+}
+*/
+void showcasePercussion(Strip_Buffer * buf, int len, Pattern_Data* params){
+  static bool perc = false;
+  //percussionPresent is a hypothetical external bool that detects if percussion is present
+  if (percussionPresent != perc){
+    if (percussionPresent){
+      buf->leds[len] = CHSV(fhue, 255, vbrightness);
+    }
+    perc = percussionPresent;
+  }
+  for (int i = 0; i < len - 1; i++){
+    buf->leds[i] = buf->leds[i + 1];
+  }
+}
+
+void showcaseCentroid(Strip_Buffer * buf, int len, Pattern_Data* params){
+  //centroid is a hypothetical external float that showcases the frequency of the center of mass, characterizing brightness
+  for(int i = 0; i < len; i++){
+    int brit = map(vReal[i], MIN_FREQUENCY, MAX_FREQUENCY, 0, 255); // The brightness is based on HOW MUCH of the frequency exists
+    if(vReal[i] >= centroid){
+      buf->leds[i] = blend(buf->leds[i], CHSV(194, 79, brit));
+    }
+    else{
+      buf->leds[i] = blend(buf->leds[i], CHSV(83, 38, brit));
+    }
+  }
+}
+
+/*
+void showcaseNoisiness(Strip_Buffer * buf, int len, Pattern_Data* params){
+  //noisiness is a hypothetical external float from 1 to 0, representing the randomness of energy in the frequency.
+  //maybe use noisiness to set a blurring effect? to represent the erratic nature. Or maybe the speed for like a sin beat scenario
+}
+*/
+
+void showcaseBread(Strip_Buffer * buf, int len, Pattern_Data* params){
+  //breadSlicer is a hypothetical external array of floats, where each value corresponds to the sum of amps in that sector
+  int slices;
+  switch(param->config){
+    case 0:
+    slices = 1;
+    break;
+    case 1:
+    slices = 3;
+    break;
+    case 2:
+    slices = 5;
+    break;
+  }
+  int bands[slices];
+  for (int i = 0; i < slices; i++){
+    bands[i] = MAX_FREQUENCY / slices * i;
+  }
+  //setBreadSlicer is a hypothetical helper function that lets us configure the breadSlicer, basically calling its setBands function from the patterns
+  setBreadSlicer(bands, slices);
+  float* amps = slicerOutput();
+  for(int i = 0; i < slices - 1; i++){
+    amps[i] = amps[i] / (MAX_FREQUENCY / slices); //set to average of that area
+    int brit = remap(amps[i], MIN_FREQUENCY, MAX_FREQUENCY, 0, 255); //set brightness to average amp
+    int startingPos = len / (slices - 1) * i; //set position that this slice occupies
+    int sliceHue = 255 / (slices - 1); //set hue based on each slice
+    for(int j = 0; j < len / (slices - 1); j++){
+      buf->leds[startingPos + j] = CHSV(sliceHue, 70, brit);
+    }
+  }
+}
+
+void showcaseSalientFreqs(Strip_Buffer * buf, int len, Pattern_Data* params){
+  //salientFreqs is a hypothetical external array of ints that represent indexes with the greatest change in amplitude. By default it gives 3 points
+  static int splatter[len];
+  fadeToBlackBy(buf->leds, len, 50);
+  for(int i = 0; i < len; i++){
+    splatter[i] = -1;
+  }
+  for(int i = 0; i < 3; i++){
+    int startPos = salFreqs[i];
+    for(int i = 0; i < 4; i++){
+      if (startPos + i <= len){
+        splatter[startPos + i] = i;
+      }
+      if(startPos - i >= 0){
+        splatter[startPos - i] = i;
+      }
+    }
+  }
+  for(int i = 0; i < len; i++){
+    if (splatter[i] == 0){
+      buf->leds[i] = CHSV(fhue, 255, vbrightness);
+      splatter[i] = -1;
+    }
+    elif(splatter[i] > 0){
+      splatter[i] -= 1;
+    }
+  }
+}

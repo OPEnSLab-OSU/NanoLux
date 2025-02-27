@@ -71,7 +71,13 @@ Pattern mainPatterns[]{
     { 12, "Fire 2012", true, Fire2012},
     { 13, "Bar Fill", true, bar_fill},
     { 14, "Vowel Rain Drop", true, vowels_raindrop},
+    {15, "Blend In", true, blendIn},
+    {16, "Bleed Through", true, bleedThrough},
+    {17, "Percussion Case", true, showcasePercussion},
+    {18, "Centroid Case", true, showcaseCentroid},
+    {19, "Bread Case", true, showcaseBread},
+    {20, "Salient Freqs Case", true, showcaseSalientFreqs},
 };
-int NUM_PATTERNS = 15;  // MAKE SURE TO UPDATE THIS WITH THE ACTUAL NUMBER OF PATTERNS (+1 last array pos)
+int NUM_PATTERNS = 21;  // MAKE SURE TO UPDATE THIS WITH THE ACTUAL NUMBER OF PATTERNS (+1 last array pos)
 
 #endif

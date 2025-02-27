@@ -98,4 +98,16 @@ void bar_fill(Strip_Buffer * buf, int len, Pattern_Data* params);
 
 void vowels_raindrop(Strip_Buffer * buf, int len, Pattern_Data* params);
 
+void blendIn(Strip_Buffer * buf, int len, Pattern_Data* params);
+
+void bleedThrough(Strip_Buffer * buf, int len, Pattern_Data* params);
+
+void showcasePercussion(Strip_Buffer * buf, int len, Pattern_Data* params);
+
+void showcaseCentroid(Strip_Buffer * buf, int len, Pattern_Data* params);
+
+void showcaseBread(Strip_Buffer * buf, int len, Pattern_Data* params);
+
+void showcaseSalientFreqs(Strip_Buffer * buf, int len, Pattern_Data* params);
+
 #endif
